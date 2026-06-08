@@ -113,7 +113,10 @@ do
                 iw.init = function(self_iw, ...)
                     if self_iw.icon == "simpleui_settings" and not self_iw.file and not self_iw.image then
                         self_iw.file = icon_file
-                        return
+                        -- Fall through to orig_init so dimensions and the
+                        -- internal ImageWidget are properly initialised.
+                        -- Returning early left width/height nil and caused
+                        -- "cannot render image" crashes on paintTo.
                     end
                     if type(orig_init) == "function" then orig_init(self_iw, ...) end
                 end
