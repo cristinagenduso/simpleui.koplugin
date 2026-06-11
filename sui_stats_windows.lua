@@ -502,18 +502,44 @@ end
 -- Builds a date range card with independently tappable start/end halves.
 --
 -- Parameters:
---   inner_w        – full inner width
---   PAD_H          – horizontal padding (passed in to match caller's layout)
---   date_start_str – string to display on the left  (YYYY-MM-DD or "–")
---   date_end_str   – string to display on the right (YYYY-MM-DD or "–")
---   filepath       – used for sidecar writes; if nil the card is read-only
---   on_start_saved – function(new_date) called after a valid start edit
---   on_end_saved   – function(new_date) called after a valid end edit
+-- Removes a single key from summary in the sidecar (sets it to nil).
+-- Used by the Reset button to revert to the DB-derived fallback.
+local function _deleteSummaryField(filepath, key)
+    if not filepath or not key then return false end
+    local ok_ds, DocSettings = pcall(require, "docsettings")
+    if not ok_ds then return false end
+    local ok_open, ds = pcall(function() return DocSettings:open(filepath) end)
+    if not ok_open or not ds then return false end
+    local summary = ds:readSetting("summary")
+    if type(summary) == "table" and summary[key] ~= nil then
+        summary[key] = nil
+        ds:saveSetting("summary", summary)
+        pcall(function() ds:flush() end)
+    end
+    pcall(function() ds:close() end)
+    local SH = package.loaded["desktop_modules/module_books_shared"]
+    if SH then
+        if SH._cacheInvalidate then SH._cacheInvalidate(filepath)
+        elseif SH._cache then SH._cache[filepath] = nil end
+    end
+    return true
+end
+
+--   inner_w           – full inner width
+--   PAD_H             – horizontal padding (passed in to match caller's layout)
+--   date_start_str    – string to display on the left  (YYYY-MM-DD or "–")
+--   date_end_str      – string to display on the right (YYYY-MM-DD or "–")
+--   original_start_str – DB-derived fallback for start (shown on Reset)
+--   original_end_str   – DB-derived fallback for end   (shown on Reset)
+--   filepath          – used for sidecar writes; if nil the card is read-only
+--   on_start_saved    – function(new_date) called after a valid start edit or reset
+--   on_end_saved      – function(new_date) called after a valid end edit or reset
 --
--- Returns a FrameContainer (same appearance as before) but with each date
--- half wrapped in its own InputContainer.
+-- Returns a FrameContainer with each date half wrapped in its own
+-- InputContainer.  Tapping opens an InputDialog with Cancel / Reset / Save.
 local function _makeDateCard(inner_w, PAD_H,
                              date_start_str, date_end_str,
+                             original_start_str, original_end_str,
                              filepath,
                              on_start_saved, on_end_saved)
     local face_date  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
@@ -525,7 +551,11 @@ local function _makeDateCard(inner_w, PAD_H,
     local date_row_h = Screen:scaleBySize(24)
 
     -- Helper: open an InputDialog for a single date field.
-    local function openDateDialog(title, current, write_fn, on_saved)
+    -- delete_fn  – called with filepath on Reset to remove the sidecar field
+    -- original   – the DB fallback value passed to on_saved after a reset
+    -- has_custom – true when the displayed value came from the sidecar (not DB)
+    local function openDateDialog(title, current, write_fn, delete_fn,
+                                  original, has_custom, on_saved)
         local InputDialog = require("ui/widget/inputdialog")
         local dlg
         dlg = InputDialog:new{
@@ -537,6 +567,15 @@ local function _makeDateCard(inner_w, PAD_H,
                 {
                     text     = _("Cancel"),
                     callback = function() UIManager:close(dlg) end,
+                },
+                {
+                    text    = _("Reset"),
+                    enabled = has_custom,
+                    callback = function()
+                        UIManager:close(dlg)
+                        delete_fn(filepath)
+                        on_saved(original)
+                    end,
                 },
                 {
                     text             = _("Save"),
@@ -563,7 +602,8 @@ local function _makeDateCard(inner_w, PAD_H,
 
     -- Build each of the three columns.  Start/end are tappable when filepath
     -- is set; the arrow column is always passive.
-    local function makeSideTappable(display_str, title_str, write_fn, on_saved_cb)
+    local function makeSideTappable(display_str, title_str, write_fn,
+                                    delete_fn, original_str, on_saved_cb)
         local tw = TextWidget:new{
             text    = display_str,
             face    = face_date,
@@ -584,8 +624,12 @@ local function _makeDateCard(inner_w, PAD_H,
                 range = function() return ic.dimen end,
             }},
         }
+        -- has_custom: the displayed value differs from the DB fallback, meaning
+        -- a sidecar value is in effect and Reset makes sense.
+        local has_custom = (display_str ~= original_str)
         function ic:onTap()
-            openDateDialog(title_str, display_str, write_fn, on_saved_cb)
+            openDateDialog(title_str, display_str, write_fn, delete_fn,
+                           original_str, has_custom, on_saved_cb)
             return true
         end
         return ic
@@ -593,11 +637,17 @@ local function _makeDateCard(inner_w, PAD_H,
 
     local start_widget = makeSideTappable(
         date_start_str, _("Date started"),
-        _writeSummaryStarted, on_start_saved)
+        _writeSummaryStarted,
+        function(fp) _deleteSummaryField(fp, "date_started") end,
+        original_start_str,
+        on_start_saved)
 
     local end_widget = makeSideTappable(
         date_end_str, _("Date finished"),
-        _writeSummaryModified, on_end_saved)
+        _writeSummaryModified,
+        function(fp) _deleteSummaryField(fp, "modified") end,
+        original_end_str,
+        on_end_saved)
 
     return FrameContainer:new{
         bordersize     = 0,
@@ -982,26 +1032,30 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
 
         -- ── 3. Date range card ─────────────────────────────────────────────
 
+        -- DB-derived fallbacks (used for display and as Reset targets).
+        local original_start_str = _fmtDate(d.first_open)
+        local original_end_str   = (d.last_open and _fmtDate(d.last_open)) or "\xe2\x80\x93"
+
         -- Prefer sidecar dates over raw DB timestamps.
         local date_start_str = (type(book.date_started) == "string" and book.date_started)
-                               or _fmtDate(d.first_open)
+                               or original_start_str
         local date_end_str   = (type(book.date_finished) == "string" and book.date_finished)
-                               or (d.last_open and _fmtDate(d.last_open))
-                               or "\xe2\x80\x93"
+                               or original_end_str
 
         local date_widget = _makeDateCard(
             inner_w, PAD_H,
             date_start_str, date_end_str,
+            original_start_str, original_end_str,
             fp,
-            function(new_date)   -- on_start_saved
-                book.date_started   = new_date
+            function(new_date)   -- on_start_saved / on_start_reset
+                book.date_started   = (new_date ~= original_start_str) and new_date or nil
                 start_dates[fp]     = new_date
                 book_date_range[fp] = _fmtDateRange(new_date,
                     book.date_finished or date_end_str)
                 ctx.repaint()
             end,
-            function(new_date)   -- on_end_saved
-                book.date_finished  = new_date
+            function(new_date)   -- on_end_saved / on_end_reset
+                book.date_finished  = (new_date ~= original_end_str) and new_date or nil
                 book_date_range[fp] = _fmtDateRange(
                     book.date_started or start_dates[fp], new_date)
                 ctx.repaint()
@@ -2644,23 +2698,27 @@ function StatsWindows.showBookStatsFromFile(filepath)
 
         -- ── date range card ────────────────────────────────────────────
 
+        -- DB-derived fallbacks (used for display and as Reset targets).
+        local original_start_str = _fmtDate(d.first_open)
+        local original_end_str   = (d.last_open and _fmtDate(d.last_open)) or "\xe2\x80\x93"
+
         -- Prefer sidecar dates over raw DB timestamps.
         local date_start_str = (type(book.date_started) == "string" and book.date_started)
-                               or _fmtDate(d.first_open)
+                               or original_start_str
         local date_end_str   = (type(book.date_finished) == "string" and book.date_finished)
-                               or (d.last_open and _fmtDate(d.last_open))
-                               or "\xe2\x80\x93"
+                               or original_end_str
 
         local date_widget = _makeDateCard(
             inner_w, PAD_H,
             date_start_str, date_end_str,
+            original_start_str, original_end_str,
             fp,
-            function(new_date)   -- on_start_saved
-                book.date_started = new_date
+            function(new_date)   -- on_start_saved / on_start_reset
+                book.date_started = (new_date ~= original_start_str) and new_date or nil
                 ctx.repaint()
             end,
-            function(new_date)   -- on_end_saved
-                book.date_finished = new_date
+            function(new_date)   -- on_end_saved / on_end_reset
+                book.date_finished = (new_date ~= original_end_str) and new_date or nil
                 ctx.repaint()
             end
         )
