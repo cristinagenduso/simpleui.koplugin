@@ -2175,15 +2175,18 @@ local _ri_mode_key = "days"  -- "days" | "hours"
 function StatsWindows.showLoadingNotice()
     local ok_ss, SUISettings = pcall(require, "sui_settings")
     if ok_ss and SUISettings and not SUISettings:nilOrTrue("simpleui_stats_loading_notice") then
-        return
+        return nil
     end
     local ok_im, InfoMessage = pcall(require, "ui/widget/infomessage")
-    if not ok_im or not InfoMessage then return end
-    UIManager:show(InfoMessage:new{
+    if not ok_im or not InfoMessage then return nil end
+    local notice = InfoMessage:new{
         text    = _("Loading statistics\xe2\x80\xa6"),
         timeout = 0.0,
-    })
+    }
+    UIManager:show(notice)
     UIManager:forceRePaint()
+    StatsWindows._loading_notice = notice
+    return notice
 end
 
 --- Opens the Reading Insights window.
@@ -2770,6 +2773,10 @@ function StatsWindows.showBookStatsFromFile(filepath)
         navpager_mode = require("sui_config").isNavpagerEnabled(),
         screens  = { __root__ = buildStatsScreen },
     }
+    if StatsWindows._loading_notice then
+        UIManager:close(StatsWindows._loading_notice)
+        StatsWindows._loading_notice = nil
+    end
     win:show()
 end
 
