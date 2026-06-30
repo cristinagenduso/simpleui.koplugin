@@ -784,11 +784,31 @@ function M.updateStats(widget, ctx)
 end
 
 function M.getHeight(ctx)
-    local pfx         = ctx and ctx.pfx or ""
-    local scale       = Config.getModuleScale("coverdeck", pfx)
-    local thumb_scale = Config.getThumbScale("coverdeck", pfx)
-    local lbl_scale   = Config.getItemLabelScale("coverdeck", pfx)
-    local vis         = getVisibleElements(pfx)
+    local pfx = ctx and ctx.pfx or ""
+    -- Use pre-read settings bundle from ctx when available (normal HS path).
+    -- ctx.cfg.coverdeck.scale was captured while the landscape patch was active,
+    -- so it already carries the × 0.65 factor in landscape — giving the correct
+    -- height without needing a separate patch here.
+    local c           = ctx and ctx.cfg and ctx.cfg.coverdeck
+    local scale       = c and c.scale       or Config.getModuleScale("coverdeck", pfx)
+    local thumb_scale = c and c.thumb_scale or Config.getThumbScale("coverdeck", pfx)
+    local lbl_scale   = c and c.lbl_scale   or Config.getItemLabelScale("coverdeck", pfx)
+
+    -- Derive visibility from the bundle when available, mirroring build().
+    local vis
+    if c and c.show then
+        local has_stat = false
+        for _, key in ipairs(c.elem_order or _ELEM_DEFAULT_ORDER) do
+            if _ELEM_LABELS[key] and c.show[key] then has_stat = true; break end
+        end
+        vis = {
+            title    = c.show.title,
+            progress = c.show.progress,
+            has_stat = has_stat,
+        }
+    else
+        vis = getVisibleElements(pfx)
+    end
 
     local center_w = math.floor(Screen:scaleBySize(140) * scale * thumb_scale)
     local center_h = math.floor(center_w * 3 / 2)

@@ -1976,6 +1976,60 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
         end
     end
 
+    -- Declared early so the landscape patch below (applied before _buildCtx) can
+    -- use it.  The same value is reused further down for layout branching.
+    local is_landscape = _isLandscape()
+
+    -- In landscape, patch ALL Config scale accessors before _buildCtx and keep
+    -- them active for the entire build (ctx population + module build loop).
+    -- This ensures every module — regardless of whether it reads scale from ctx
+    -- or calls Config.get* directly at build time — sees the landscape factor.
+    -- Restored unconditionally at the end of _updatePage via a local helper.
+    local _lf_orig = {}
+    local function _applyLandscapePatch(factor)
+        _lf_orig.getModuleScale    = Config.getModuleScale
+        _lf_orig.getLabelScale     = Config.getLabelScale
+        _lf_orig.getThumbScale     = Config.getThumbScale
+        _lf_orig.getItemLabelScale = Config.getItemLabelScale
+        _lf_orig.getRSTextScalePct = Config.getRSTextScalePct
+        Config.getModuleScale    = function(mod_id, pfx) return _lf_orig.getModuleScale(mod_id, pfx)     * factor end
+        Config.getLabelScale     = function()            return _lf_orig.getLabelScale()                 * factor end
+        Config.getThumbScale     = function(mod_id, pfx) return _lf_orig.getThumbScale(mod_id, pfx)     * factor end
+        Config.getItemLabelScale = function(mod_id, pfx) return _lf_orig.getItemLabelScale(mod_id, pfx) * factor end
+        Config.getRSTextScalePct = function()            return _lf_orig.getRSTextScalePct()             * factor end
+    end
+    local function _restoreLandscapePatch()
+        if _lf_orig.getModuleScale then
+            Config.getModuleScale    = _lf_orig.getModuleScale
+            Config.getLabelScale     = _lf_orig.getLabelScale
+            Config.getThumbScale     = _lf_orig.getThumbScale
+            Config.getItemLabelScale = _lf_orig.getItemLabelScale
+            Config.getRSTextScalePct = _lf_orig.getRSTextScalePct
+            _lf_orig = {}
+        end
+    end
+
+    -- Compute landscape scale factor and apply the Config patch.
+    -- Declared here (function scope) so the second is_landscape block below can
+    -- read it when storing _clock_landscape_factor for the clock tick path.
+    -- In landscape: Screen:getWidth() is the long axis; Screen:getHeight() is the
+    -- short axis, which equals portrait width. This gives us portrait_inner_w
+    -- without any device-specific constants.
+    --   landscape_inner_w = Screen:getWidth()  - 2*SIDE_PAD
+    --   col_w             = floor((landscape_inner_w - PAD) / 2)
+    --   portrait_inner_w  = Screen:getHeight() - 2*SIDE_PAD
+    --   factor            = col_w / portrait_inner_w
+    -- Note: `inner_w` (from _layout_inner_w) is declared after this block, so we
+    -- compute _landscape_inner_w directly from Screen:getWidth() here.
+    local _landscape_factor
+    if is_landscape then
+        local _landscape_inner_w = Screen:getWidth()  - SIDE_PAD * 2
+        local _portrait_inner_w  = Screen:getHeight() - SIDE_PAD * 2
+        local _col_w_preview     = math.floor((_landscape_inner_w - PAD) / 2)
+        _landscape_factor = _col_w_preview / _portrait_inner_w
+        _applyLandscapePatch(_landscape_factor)
+    end
+
     local ctx
     if keep_cache and self._ctx_cache then
         ctx = self._ctx_cache
@@ -1985,7 +2039,7 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     end
     local inner_w = self._layout_inner_w or (Screen:getWidth() - SIDE_PAD * 2)
     local body    = self._body
-    if not body then return end
+    if not body then _restoreLandscapePatch() ; return end
 
     -- Module list cache — rebuilt whenever layout changes.
     local layout = SUISettings:readSetting("simpleui_layout")
@@ -2090,7 +2144,6 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     -- Clamp current page and normalise to odd index in landscape (spread mode).
     if self._current_page > total_pages then self._current_page = total_pages end
     if self._current_page < 1           then self._current_page = 1           end
-    local is_landscape = _isLandscape()
     if is_landscape and total_pages > 1 and self._current_page % 2 == 0 then
         self._current_page = self._current_page - 1
     end
@@ -2154,23 +2207,11 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     local page_has_covers = false
 
     if is_landscape then
-        -- In landscape, temporarily override Config scale accessors by a fixed
-        -- factor so all module builds and getHeight() calls use the scaled value.
-        -- Originals are restored immediately after the build loop.
-        local LANDSCAPE_FACTOR = 0.65
+        -- Config scale accessors are already patched above (active for the full
+        -- build). _landscape_factor was computed at the top of this branch and
+        -- is stored here for the clock tick path which rebuilds outside _updatePage.
+        local LANDSCAPE_FACTOR = _landscape_factor
         self._clock_landscape_factor = LANDSCAPE_FACTOR
-        local _orig_getModuleScale = Config.getModuleScale
-        local _orig_getLabelScale  = Config.getLabelScale
-        local _orig_getThumbScale  = Config.getThumbScale
-        Config.getModuleScale = function(mod_id, pfx)
-            return _orig_getModuleScale(mod_id, pfx) * LANDSCAPE_FACTOR
-        end
-        Config.getLabelScale = function()
-            return _orig_getLabelScale() * LANDSCAPE_FACTOR
-        end
-        Config.getThumbScale = function(mod_id, pfx)
-            return _orig_getThumbScale(mod_id, pfx) * LANDSCAPE_FACTOR
-        end
 
         local COL_GAP = PAD
         local col_w   = math.floor((inner_w - COL_GAP) / 2)
@@ -2329,9 +2370,6 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
             end
         end
 
-        Config.getModuleScale = _orig_getModuleScale
-        Config.getLabelScale  = _orig_getLabelScale
-        Config.getThumbScale  = _orig_getThumbScale
     else
         -- Portrait single-column layout.
         self._clock_landscape_factor = nil
@@ -2492,6 +2530,9 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     if Config.cover_extraction_pending and not self._cover_poll_timer then
         self:_scheduleCoverPoll()
     end
+
+    -- Restore Config scale accessors patched at the top of this function.
+    _restoreLandscapePatch()
 end
 
 -- ---------------------------------------------------------------------------
@@ -2978,7 +3019,9 @@ function HomescreenWidget:onSetRotationMode(mode)
 
     Homescreen._cached_books_state = self._cached_books_state
     Homescreen._current_page       = self._current_page
-    Homescreen._cfg_cache          = self._cfg_cache
+    -- _cfg_cache intentionally not propagated: the new instance must rebuild it
+    -- with the landscape patch active so scale values are correct for the new
+    -- orientation.  Book state and page are cheap to preserve; cfg is not.
 
     Homescreen._rotation_on_qa_tap   = on_qa_tap
     Homescreen._rotation_on_goal_tap = on_goal_tap
