@@ -632,6 +632,33 @@ M.NAVBAR_LABEL_SCALE_MIN  = NAVBAR_LABEL_SCALE_MIN
 M.NAVBAR_LABEL_SCALE_MAX  = NAVBAR_LABEL_SCALE_MAX
 M.NAVBAR_LABEL_SCALE_STEP = SCALE_STEP
 
+-- Global Font Scale (Style ▸ Text Size)
+-- Multiplies SUIStyle's five FS_* typographic levels (title/subtitle/body/
+-- detail/caption). Unlike the per-bar scales above, FS_* is baked into
+-- module-level constants at sui_style.lua load time, so a change here only
+-- takes full effect after a restart — mirrors the UI Font picker.
+local FONT_SCALE_KEY  = "simpleui_style_font_scale_pct"
+local FONT_SCALE_DEF  = 100
+local FONT_SCALE_MIN  = 50
+local FONT_SCALE_MAX  = 150
+
+function M.getFontScalePct()
+    local v = SUISettings:get(FONT_SCALE_KEY)
+    local n = tonumber(v)
+    if not n then return FONT_SCALE_DEF end
+    return math_max(FONT_SCALE_MIN, math_min(FONT_SCALE_MAX, math_floor(n)))
+end
+
+function M.setFontScalePct(pct)
+    SUISettings:set(FONT_SCALE_KEY,
+        math_max(FONT_SCALE_MIN, math_min(FONT_SCALE_MAX, math_floor(pct))))
+end
+
+M.FONT_SCALE_DEF  = FONT_SCALE_DEF
+M.FONT_SCALE_MIN  = FONT_SCALE_MIN
+M.FONT_SCALE_MAX  = FONT_SCALE_MAX
+M.FONT_SCALE_STEP = SCALE_STEP
+
 -- Link Scale
 function M.isScaleLinked()
     local v = SUISettings:get(SCALE_LINKED_KEY)

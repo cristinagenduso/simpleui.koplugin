@@ -1327,8 +1327,8 @@ function SimpleUIPlugin:onSimpleUISettingsWindow()
 end
 
 function SimpleUIPlugin:onSimpleUIRecentWindow()
-    local ok, RW = pcall(require, "sui_recent_window")
-    if ok and RW and RW.show then RW.show() end
+    local ok, QA = pcall(require, "sui_quickactions")
+    if ok and QA and QA.showRecentWindow then QA.showRecentWindow() end
     return true
 end
 
