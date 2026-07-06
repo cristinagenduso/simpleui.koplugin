@@ -2964,7 +2964,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local RECENT_NUM_COLS  = 4
-local RECENT_MAX_BOOKS = 24  -- 6 rows of 4 at the default column count
+local RECENT_MAX_BOOKS = RECENT_NUM_COLS  -- single row, no wrapping
 
 -- Mirrors sui_homescreen.lua's _normalizeKoboPath() so covers sourced the
 -- same way (via module_books_shared/ReadHistory) open identically on Kobo.
