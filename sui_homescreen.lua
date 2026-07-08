@@ -446,7 +446,10 @@ end
 
 -- Returns true when the screen is in landscape orientation.
 local function _isLandscape()
-    return UI.isLandscape()
+    if UI.isLandscape then
+        return UI.isLandscape()
+    end
+    return Screen:getWidth() > Screen:getHeight()
 end
 
 -- Computes a landscape page step (2 in landscape spread mode, 1 in portrait).
@@ -1851,6 +1854,37 @@ function HomescreenWidget:_onHoldModRelease(wrapper)
     local hs  = wrapper._sui_hs
     if not mod or not hs then return true end
 
+    -- Custom long-press actions for modules
+    if mod.id == "coverdeck" then
+        local action = SUISettings:readSetting(PFX .. "coverdeck_hold_action") or "settings"
+        if action == "bookinfo" then
+            local center_fp = wrapper[1] and wrapper[1]._center_fp
+            if center_fp then
+                local ok, err = pcall(function()
+                    local FileManager = package.loaded["apps/filemanager/filemanager"]
+                    local fm = FileManager and FileManager.instance
+                    local fc = fm and fm.file_chooser
+                    if fc and type(fc.showFileDialog) == "function" then
+                        fc:showFileDialog({ path = center_fp, is_file = true })
+                    else
+                        local bookinfo = fm and fm.bookinfo
+                        if not bookinfo then
+                            local ok_bi, BookInfo = pcall(require, "apps/filemanager/filemanagerbookinfo")
+                            if ok_bi and BookInfo then bookinfo = BookInfo end
+                        end
+                        if bookinfo and type(bookinfo.onShowBookInfo) == "function" then
+                            bookinfo:onShowBookInfo(center_fp)
+                        end
+                    end
+                end)
+                if not ok then
+                    logger.warn("simpleui coverdeck hold bookinfo error: " .. tostring(err))
+                end
+                return true
+            end
+        end
+    end
+
         local SUIWindow = require("sui_window")
 
         local function buildRoot(ctx)
@@ -2017,7 +2051,16 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     -- read it when storing _clock_landscape_factor for the clock tick path.
     local _landscape_factor
     if is_landscape then
-        _landscape_factor = UI.getLandscapeFactor()
+        if UI.getLandscapeFactor then
+            _landscape_factor = UI.getLandscapeFactor()
+        else
+            local side_pad = UI.SIDE_PAD or Screen:scaleBySize(14)
+            local pad = UI.PAD or Screen:scaleBySize(14)
+            local landscape_inner_w = Screen:getWidth()  - side_pad * 2
+            local portrait_inner_w  = Screen:getHeight() - side_pad * 2
+            local col_w             = math.floor((landscape_inner_w - pad) / 2)
+            _landscape_factor = col_w / portrait_inner_w
+        end
         _applyLandscapePatch(_landscape_factor)
     end
 

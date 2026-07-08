@@ -1435,10 +1435,39 @@ function M.getMenuItems(ctx_menu)
         end or nil,
     }
 
+    local hold_action_item = {
+        text_func = function()
+            local action = SUISettings:readSetting(pfx .. "coverdeck_hold_action") or "settings"
+            local display = action == "bookinfo" and _lc("Book Info") or _lc("Settings")
+            return string.format("%s: %s", _lc("Long press"), display)
+        end,
+        sub_item_table = {
+            {
+                text         = _lc("Settings"), radio = true,
+                checked_func = function() return (SUISettings:readSetting(pfx .. "coverdeck_hold_action") or "settings") == "settings" end,
+                keep_menu_open = true,
+                callback     = function()
+                    SUISettings:saveSetting(pfx .. "coverdeck_hold_action", "settings")
+                    refresh()
+                end,
+            },
+            {
+                text         = _lc("Book Info"), radio = true,
+                checked_func = function() return SUISettings:readSetting(pfx .. "coverdeck_hold_action") == "bookinfo" end,
+                keep_menu_open = true,
+                callback     = function()
+                    SUISettings:saveSetting(pfx .. "coverdeck_hold_action", "bookinfo")
+                    refresh()
+                end,
+            },
+        },
+    }
+
     local menu = {}
     menu[#menu+1] = source_item
     menu[#menu+1] = items_item
     for _i, item in ipairs(scale_items) do menu[#menu+1] = item end
+    menu[#menu+1] = hold_action_item
     menu[#menu+1] = {
         text           = _lc("Progress bar"),
         checked_func   = function() return _showElem(pfx, "progress") end,
